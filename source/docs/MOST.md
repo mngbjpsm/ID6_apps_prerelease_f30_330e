@@ -33,7 +33,7 @@ The workers switch transport before sending a control request. A rejected or unc
 
 ## What goes over MOST
 
-- Only the DME (`0x12`). BoostDeck's EGS transmission temperature (`DA12`) stays blank on MOST, and so does its ethanol read (`2C 88 01`).
+- Only the DME (`0x12`). BoostDeck's EGS transmission temperature (`DA12`) stays blank on MOST, and so does its ethanol read (`2C 88 01`). **Read all modules** reads the engine alone on MOST and says so in its header.
 - Requests use routine `0x0F0B` on FBlock `0x06`, instance `0xF0`, FktID `0x050`, with diagnostic source `0x63`, through `DSYSMOSTServer`.
 - A request waits the larger of its own timeout and 2 s. A pending reply extends that up to 5 s in all.
 - A reply holds at most 512 bytes, about 127 fault codes. A longer code reply is dropped and shows "No valid code response". A reply that fills all 512 bytes adds "More codes may exist".

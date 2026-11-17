@@ -274,5 +274,132 @@ class EngineCodesTest(unittest.TestCase):
         self.assertNotIn("FAKE-MOST bind", r.stderr)
 
 
+def hsfz(source, uds_hex):
+    return frame(1, bytes([source, 0xF4]) + bytes.fromhex(uds_hex))
+
+
+class AllModulesTest(unittest.TestCase):
+    """--all: one functional read to 0xDF, a per-address sweep when the gateway refuses it."""
+
+    def run_all(self, connections, timeout=20):
+        """Each entry handles one accepted HSFZ connection; return the result and every request seen."""
+        requests, errors = [], []
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            listener.settimeout(5)
+
+            def gateway():
+                try:
+                    for handle in connections:
+                        conn, _ = listener.accept()
+                        with conn:
+                            conn.settimeout(12)
+                            def read():
+                                size, control = struct.unpack(">IH", exact(conn, 6))
+                                self.assertEqual(control, 1)
+                                body = exact(conn, size)
+                                requests.append(body.hex())
+                                return body
+                            handle(conn, read)
+                except Exception as error:
+                    errors.append(error)
+
+            thread = threading.Thread(target=gateway)
+            thread.start()
+            started = time.monotonic()
+            r = run("engine-codes", ["--host", "127.0.0.1", "--port", str(listener.getsockname()[1]),
+                                     "--all"], "up", timeout=timeout)
+            elapsed = time.monotonic() - started
+            thread.join(5)
+        if errors:
+            raise errors[0]
+        return r, requests, elapsed
+
+    def test_functional_scan_groups_codes_by_module(self):
+        def functional(conn, read):
+            body = read()
+            self.assertEqual(body, bytes.fromhex("f4df1902af"))
+            conn.sendall(frame(2, body))                       # the gateway's echo
+            conn.sendall(frame(0x12, bytes([0, 0xF4])))         # alive check mid-scan
+            alive = exact(conn, 8)
+            self.assertEqual(alive, bytes.fromhex("00000002001300f4"))
+            conn.sendall(hsfz(0x07, "7f1978"))                 # the battery unit is still working
+            conn.sendall(hsfz(0x12, "5902ff1234562f"))
+            conn.sendall(hsfz(0x29, "7f1922"))                 # refused
+            conn.sendall(hsfz(0x40, "5902ff"))                 # answered, nothing stored
+            conn.sendall(hsfz(0x60, "5902ff12345600"))         # status 00: not a fault
+            conn.sendall(hsfz(0x12, "5902ff0abcde08"))         # a second reply from one unit is ignored
+            conn.sendall(hsfz(0x63, "5902ff01"))               # malformed record
+            time.sleep(0.5)
+            conn.sendall(hsfz(0x07, "5902ff21f15608800001a4"))
+            self.assertEqual(conn.recv(1), b"")
+
+        r, requests, elapsed = self.run_all([functional])
+        self.assertEqual(requests, ["f4df1902af"])
+        self.assertEqual(r.stdout,
+                         "All modules: 3 codes in 2 of 6 modules\n"
+                         "ECU 07  21F156  status 08\n"
+                         "ECU 07  800001  status A4\n"
+                         "ECU 12  123456  status 2F\n"
+                         "ECU 29  refused NRC 22\n"
+                         "ECU 63  invalid reply\n")
+        # Ends four seconds after the last reply, not after the pending unit's ten.
+        self.assertGreater(elapsed, 4)
+        self.assertLess(elapsed, 8)
+
+    def test_refused_functional_target_falls_back_to_a_sweep(self):
+        answered = {0x12: "5902ff1234562f", 0x07: "5902ff21f15608", 0x29: "7f1922"}
+
+        def refuse(conn, read):
+            self.assertEqual(read(), bytes.fromhex("f4df1902af"))
+            conn.sendall(frame(0x43, bytes.fromhex("f4df1902af")))   # incorrect destination address
+            self.assertEqual(conn.recv(1), b"")
+
+        def sweep(conn, read):
+            while True:
+                first = conn.recv(1)
+                if not first:
+                    return
+                size, control = struct.unpack(">IH", first + exact(conn, 5))
+                body = exact(conn, size)
+                requests_seen.append(body[1])
+                self.assertEqual(body[0], 0xF4)
+                self.assertEqual(body[2:], bytes.fromhex("1902af"))
+                # Every other address answers "service not supported", so the test needs no timeouts.
+                conn.sendall(hsfz(body[1], answered.get(body[1], "7f1911")))
+
+        requests_seen = []
+        r, _, _ = self.run_all([refuse, sweep])
+        self.assertEqual(requests_seen[0], 0x12)                  # the engine module first
+        self.assertIn(0x07, requests_seen)
+        self.assertIn(0x3A, requests_seen)
+        self.assertEqual(len(requests_seen), len(set(requests_seen)))
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], f"All modules: 2 codes in 2 of {len(requests_seen)} modules")
+        self.assertEqual(lines[1:3], ["ECU 07  21F156  status 08", "ECU 12  123456  status 2F"])
+        self.assertEqual(lines[3], "ECU 01  refused NRC 11")
+        self.assertIn("ECU 29  refused NRC 22", lines)
+
+    def test_silent_car_reports_ignition(self):
+        def silent(conn, read):
+            read()
+            self.assertEqual(conn.recv(1), b"")
+
+        def silent_engine(conn, read):
+            self.assertEqual(read(), bytes.fromhex("f4121902af"))
+            self.assertEqual(conn.recv(1), b"")              # gives up after the engine module
+
+        r, requests, elapsed = self.run_all([silent, silent_engine])
+        self.assertEqual(r.stdout, "No module answered. Is the ignition on?\n")
+        self.assertEqual(requests, ["f4df1902af", "f4121902af"])
+        self.assertLess(elapsed, 11)
+
+    def test_most_reads_engine_only(self):
+        r = run("engine-codes", ["--transport", "most", "--all"], "up")
+        self.assertEqual(r.stdout, "Engine only, other modules need the ENET gateway: 2 codes\n"
+                                   "123456  status 2F\n0ABCDE  status 08\n")
+
+
 if __name__ == "__main__":
     unittest.main()
