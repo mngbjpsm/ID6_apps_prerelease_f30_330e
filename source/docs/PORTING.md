@@ -31,7 +31,7 @@ python3 tools/probe_signals.py --local 169.254.10.2 --gateway 169.254.10.3 --ecu
 python3 tools/probe_signals.py --local 169.254.10.2 --gateway 169.254.10.3 --ecu 18 22da12
 ```
 
-On Windows use `py -3` if Python is installed with the launcher. The probe allows only explicit `01` and `22` reads, targets DME or EGS, and bounds and spaces its requests. Keep address, request, complete response, test conditions, and the independent reading for each candidate.
+On Windows use `py -3` if Python is installed with the launcher. The probe allows only explicit `01` and `22` reads, targets DME `12` or EGS `18`, and bounds and spaces its requests. On a plug-in hybrid it also accepts the battery management SME `07` and the electric machine electronics EME, which is `3A` or `1A` depending on the car. These answer over HSFZ only, since the MOST tunnel reaches the DME alone. Keep address, request, complete response, test conditions, and the independent reading for each candidate.
 
 | Observation | Next check |
 | --- | --- |

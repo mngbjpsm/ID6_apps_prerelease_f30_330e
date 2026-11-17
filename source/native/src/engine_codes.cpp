@@ -2,6 +2,7 @@
 #include "diagnostic_worker.h"
 #include "diagnostic_gateway.h"
 #include "dme_descriptions.h"
+#include "ecu_names.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/wait.h>
@@ -10,24 +11,52 @@ namespace {
 const unsigned kCodesPollKey = 0x4543504cu;
 const unsigned kCodePageSize = 4;
 const char kEngineWorker[] = "/var/opt/hmi/data/ID5/Plugins/EngineCodes/engine-codes-qnx";
+enum CodeMode { kReadEngine, kClearEngine, kReadAll };
+
+const char* status_text(unsigned status) {
+    return (status & 1u) ? "Active" : (status & 4u) ? "Pending" : "Stored";
+}
+
+const char* dme_description(unsigned code) {
+    for (unsigned i=0;i<sizeof kDmeDescriptions/sizeof kDmeDescriptions[0];++i)
+        if (kDmeDescriptions[i].code==code) return kDmeDescriptions[i].text;
+    return "Description unavailable";
+}
+
+void module_label(char* text, size_t size, unsigned ecu) {
+    const char* name=ecu_name(ecu);
+    if (name) snprintf(text,size,"%s (%02X)",name,ecu);
+    else snprintf(text,size,"Module %02X",ecu);
+}
 
 void format_code_line(char* text, size_t size, const char* line, int length, char* detail, size_t detail_size) {
     detail[0]=0;
-    unsigned code, status;
+    unsigned ecu, code, status;
     int used=0;
+    char module[48];
+    // All-modules lines: "ECU 07  21F156  status 2F", or "ECU 29  refused NRC 22".
+    if (sscanf(line,"ECU %2x  %6x  status %2x%n",&ecu,&code,&status,&used)==3 && used==length) {
+        module_label(module,sizeof module,ecu);
+        snprintf(text,size,"%06X   %s",code,status_text(status));
+        // The description table holds this project's DME codes; other modules have no local texts.
+        if (ecu==0x12) snprintf(detail,detail_size,"%s: %s",module,dme_description(code));
+        else snprintf(detail,detail_size,"%s",module);
+        return;
+    }
+    used=0;
+    if (sscanf(line,"ECU %2x  %n",&ecu,&used)==1 && used>0 && used<length) {
+        module_label(module,sizeof module,ecu);
+        snprintf(text,size,"Not read");
+        snprintf(detail,detail_size,"%s: %.*s",module,length-used,line+used);
+        return;
+    }
+    used=0;
     if (sscanf(line,"%6x  status %2x%n",&code,&status,&used)!=2 || used!=length) {
         snprintf(text,size,"%.*s",length,line);
         return;
     }
-    const char* description="Description unavailable";
-    for (unsigned i=0;i<sizeof kDmeDescriptions/sizeof kDmeDescriptions[0];++i) {
-        if (kDmeDescriptions[i].code==code) {
-            description=kDmeDescriptions[i].text;
-            break;
-        }
-    }
-    snprintf(text,size,"%06X   %s",code,(status & 1u) ? "Active" : (status & 4u) ? "Pending" : "Stored");
-    snprintf(detail,detail_size,"%s",description);
+    snprintf(text,size,"%06X   %s",code,status_text(status));
+    snprintf(detail,detail_size,"%s",dme_description(code));
 }
 }
 
@@ -44,7 +73,7 @@ class EngineCodes : public bmw::PluginApp {
     unsigned code_page_;
     unsigned poll_generation_;
 
-    void startCodes(bool clear);
+    void startCodes(CodeMode mode);
     void pollCodes();
     void renderCodes();
     void reapWorker() {
@@ -82,6 +111,8 @@ public:
         action.m_obj=this;
         action.m_exec=&Action::execImpl<EngineCodes,&EngineCodes::readEngine>;
         addHandler(23u,action);
+        action.m_exec=&Action::execImpl<EngineCodes,&EngineCodes::readAll>;
+        addHandler(24u,action);
         action.m_exec=&Action::execImpl<EngineCodes,&EngineCodes::clearEngine>;
         addHandler(27u,action);
         action.m_exec=&Action::execImpl<EngineCodes,&EngineCodes::nextCodes>;
@@ -89,7 +120,7 @@ public:
         code_size_=0;
         code_page_=0;
         clearRows();
-        updateModel(80u,bmw::BasicString<char>("Select Read engine codes"));
+        updateModel(80u,bmw::BasicString<char>("Select Read engine codes or Read all modules"));
         updateModel(89u,bmw::BasicString<char>("Engine fault memory"));
         updateModel(90u,bmw::BasicString<char>("Clears stored codes and freeze-frame data"));
         if (codes_pid_>0) postPoll();
@@ -106,8 +137,9 @@ public:
         return true;
     }
 
-    bool readEngine(const bmw::Parcel&) { startCodes(false); return true; }
-    bool clearEngine(const bmw::Parcel&) { startCodes(true); return true; }
+    bool readEngine(const bmw::Parcel&) { startCodes(kReadEngine); return true; }
+    bool readAll(const bmw::Parcel&) { startCodes(kReadAll); return true; }
+    bool clearEngine(const bmw::Parcel&) { startCodes(kClearEngine); return true; }
     bool nextCodes(const bmw::Parcel&) {
         if (codes_fd_<0 && code_size_) { ++code_page_; renderCodes(); }
         return true;
@@ -120,7 +152,7 @@ public:
     }
 };
 
-void EngineCodes::startCodes(bool clear) {
+void EngineCodes::startCodes(CodeMode mode) {
     if (codes_fd_>=0 || codes_pid_>0) return;
     int channel[2];
     if (pipe(channel)<0) {
@@ -128,7 +160,8 @@ void EngineCodes::startCodes(bool clear) {
         return;
     }
     const DiagnosticGateway gateway("/var/opt/hmi/data/ID5/Plugins/" "EngineCodes" "/gateway-ip.txt");
-    const char *args[]={worker_,"--host",gateway.host(),clear ? "--clear" : "--codes",0};
+    const char *args[]={worker_,"--host",gateway.host(),
+                        mode==kClearEngine ? "--clear" : mode==kReadAll ? "--all" : "--codes",0};
     if (fcntl(channel[0],F_SETFL,O_NONBLOCK)>=0 &&
         fcntl(channel[0],F_SETFD,FD_CLOEXEC)>=0 && fcntl(channel[1],F_SETFD,FD_CLOEXEC)>=0)
         codes_pid_=launch(args,channel[1]);
@@ -143,7 +176,9 @@ void EngineCodes::startCodes(bool clear) {
     code_page_=0;
     code_result_[0]=0;
     clearRows();
-    updateModel(80u,bmw::BasicString<char>(clear ? "Clearing engine codes..." : "Reading codes..."));
+    updateModel(80u,bmw::BasicString<char>(mode==kClearEngine ? "Clearing engine codes..." :
+                                            mode==kReadAll ? "Reading all modules, up to 30 s..." :
+                                            "Reading codes..."));
     postPoll();
 }
 

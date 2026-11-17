@@ -23,7 +23,7 @@ Choose **MHD+ Suite** or **Bootmod3 Suite**. [Download the dashboard package](pa
 - **MHD+ Suite** offers four map slots and puts **Exhaust Flap** and **Max Cooling** under **Options**.
 - **Bootmod3 Suite** is a new beta control menu for compatible CustomROM tunes. It offers four map slots, exhaust flap control, Active Sound, and burble presets.
 - **xDrive Control** is an xDelete-style beta menu for temporarily selecting rear-wheel drive on supported DSC versions. It is still being tested, with no guarantee of compatibility or operation. **The engine must be off before switching from AWD to RWD or from RWD to AWD.**
-- **Engine Fault Codes** reads engine/DME fault codes and shows descriptions when available. It can read codes even when the DME refuses to clear them.
+- **Engine Fault Codes** reads engine/DME fault codes and shows descriptions when available. It can read codes even when the DME refuses to clear them. **Read all modules** reads the fault memory of every control unit, including the hybrid battery and e-motor units, and names each unit. It is read-only. Descriptions exist for engine codes only, and clearing stays engine-only.
 - **HUD Gauges** projects a live curved tachometer and numeric boost in PSI onto the factory windshield HUD. The tach spans 0–8,000 RPM, with a thicker redline zone starting at 6,700 RPM. Enable **My Vehicle → HUD Gauges → Show HUD gauges** to keep the display on after leaving the menu and restore it at the next boot. Uncheck it to clear the display. The overlay yields when it detects factory navigation guidance. [HUD Gauges package](packages/hud-gauges.zip)
 
 ## Screenshots from iDrive

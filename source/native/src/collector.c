@@ -49,11 +49,12 @@ static int exchange(int fd, unsigned ecu, const unsigned char *uds, unsigned uds
 #elif defined(ENGINE_CODES_ONLY)
 #include "most/most_link.h"
 
-static void fault_codes(struct diag_link *link, int clear) {
-    /* Fault, pending, confirmed, failed since clear, or warning requested.
-     * Bits 0x10 and 0x40 only report incomplete tests. */
-    enum { fault_status = 0xaf };
-    const unsigned char read_request[]={0x19,0x02,fault_status}, read_reply[]={0x59,0x02};
+/* Fault, pending, confirmed, failed since clear, or warning requested.
+ * Bits 0x10 and 0x40 only report incomplete tests. */
+enum { fault_status = 0xaf };
+static const unsigned char read_request[]={0x19,0x02,fault_status}, read_reply[]={0x59,0x02};
+
+static void fault_codes(struct diag_link *link, int clear, const char *who) {
     const unsigned char clear_request[]={0x14,0xff,0xff,0xff}, clear_reply[]={0x54};
     unsigned char reply[4094];
     unsigned negative;
@@ -88,7 +89,7 @@ static void fault_codes(struct diag_link *link, int clear) {
     supported_fault_status=reply[2] & fault_status;
     for (i=3;i<n;i+=4)
         if (reply[i+3] & supported_fault_status) ++count;
-    printf("Engine: %d %s%s\n",count,
+    printf("%s: %d %s%s\n",who,count,
            count==1 ? "code" : "codes",clear ? " after clear" : "");
     for (i=3;i<n && shown<128;i+=4) {
         if (!(reply[i+3] & supported_fault_status)) continue;
@@ -97,6 +98,114 @@ static void fault_codes(struct diag_link *link, int clear) {
     }
     if (count>128) puts("More codes returned; first 128 shown");
     if (full) puts("More codes may exist");
+}
+
+/* Every module's fault memory, read only. One functional request reaches every ECU behind the gateway, as
+ * BMW's own testers read them. If the gateway refuses that target, or no module answers it, each known
+ * F-series address is asked in turn. */
+enum { MAX_MODULE_LINES = 130, SWEEP_TIMEOUT_MS = 800, SWEEP_ENGINE_TIMEOUT_MS = 1800 };
+struct module_scan {
+    unsigned char answered[256], refused[256], invalid[256];
+    unsigned nrc[256], codes[256];
+    struct { unsigned char ecu, code[3], status; } found[MAX_MODULE_LINES];
+    unsigned stored, total;
+};
+
+static void module_reply(void *ctx, unsigned ecu, const unsigned char *reply, unsigned n) {
+    struct module_scan *s = ctx;
+    unsigned mask, i;
+    ecu &= 0xff;
+    if (s->answered[ecu]) return;   /* one reply per module */
+    s->answered[ecu] = 1;
+    if (reply[0] == 0x7f) { s->refused[ecu] = 1; s->nrc[ecu] = n >= 3 ? reply[2] : 0; return; }
+    if (n < 3 || (n-3) % 4) { s->invalid[ecu] = 1; return; }
+    mask = reply[2] & fault_status;
+    for (i = 3; i < n; i += 4) {
+        if (!(reply[i+3] & mask)) continue;
+        ++s->codes[ecu];
+        ++s->total;
+        if (s->stored < MAX_MODULE_LINES) {
+            s->found[s->stored].ecu = (unsigned char)ecu;
+            memcpy(s->found[s->stored].code, reply+i, 3);
+            s->found[s->stored].status = reply[i+3];
+            ++s->stored;
+        }
+    }
+}
+
+/* Diagnostic addresses on F-series cars, the plug-in hybrid units included. The plugin names them. */
+static const unsigned char sweep_ecus[] = {
+    0x12, 0x10, 0x01, 0x06, 0x07, 0x08, 0x0d, 0x13, 0x14, 0x18, 0x1a, 0x1d, 0x20, 0x21, 0x23, 0x28, 0x29,
+    0x2a, 0x2c, 0x30, 0x37, 0x38, 0x39, 0x3a, 0x40, 0x43, 0x44, 0x45, 0x56, 0x5d, 0x5e, 0x60, 0x61, 0x63,
+    0x64, 0x67, 0x6d, 0x72, 0x76, 0x78
+};
+
+/* 1 done, 0 the link failed. */
+static int sweep_modules(struct diag_link *link, struct module_scan *s) {
+    unsigned char reply[4094];
+    unsigned i, negative;
+    for (i = 0; i < sizeof sweep_ecus && diag_running; ++i) {
+        uint64_t started = bd_mono_ms();
+        unsigned timeout = i == 0 ? SWEEP_ENGINE_TIMEOUT_MS : SWEEP_TIMEOUT_MS;
+        int n = diag_link_request(link, sweep_ecus[i], read_request, sizeof read_request,
+                                  read_reply, sizeof read_reply, reply, sizeof reply, timeout, &negative);
+        if (n == -2) {
+            unsigned char refusal[3] = {0x7f, 0x19, 0};
+            refusal[2] = (unsigned char)negative;
+            module_reply(s, sweep_ecus[i], refusal, sizeof refusal);
+        } else if (n >= 0) module_reply(s, sweep_ecus[i], reply, (unsigned)n);
+        /* A timeout runs its full course; an early failure means the connection is gone. */
+        else if (bd_mono_ms() - started < timeout / 2) return 0;
+        /* The engine module is always fitted: without its reply, nothing else will answer either. */
+        if (i == 0 && n == -1) return 1;
+    }
+    return 1;
+}
+
+static void all_module_codes(struct diag_link *link) {
+    static struct module_scan s;
+    unsigned ecu, i, modules = 0, with_codes = 0, lines = 0;
+    int rc, ok = 1;
+    if (!diag_link_up(link)) { puts("Diagnostic gateway unavailable"); return; }
+    if (diag_link_on_most(link)) {   /* the head unit's tunnel reaches the engine module alone */
+        fault_codes(link, 0, "Engine only, other modules need the ENET gateway");
+        return;
+    }
+    memset(&s, 0, sizeof s);
+    rc = diag_hsfz_functional(link->fd, 0xdf, read_request, sizeof read_request, read_reply,
+                              sizeof read_reply, 6000, 4000, 10000, 25000, module_reply, &s);
+    if (rc < 0 && rc != -2) ok = 0;
+    else if (rc <= 0) {
+        /* Start the sweep on a clean connection, so a late functional reply cannot be misread. */
+        diag_link_drop(link);
+        ok = diag_link_up(link) && sweep_modules(link, &s);
+    }
+    for (ecu = 0; ecu < 256; ++ecu) {
+        modules += s.answered[ecu];
+        with_codes += s.codes[ecu] != 0;
+    }
+    if (!modules) {
+        puts(ok ? "No module answered. Is the ignition on?" : "Diagnostic connection lost");
+        return;
+    }
+    printf("All modules: %u %s in %u of %u %s%s\n", s.total, s.total == 1 ? "code" : "codes", with_codes,
+           modules, modules == 1 ? "module" : "modules", ok ? "" : ", connection lost");
+    /* Grouped by module, in address order. */
+    for (ecu = 0; ecu < 256; ++ecu) {
+        for (i = 0; i < s.stored && lines < MAX_MODULE_LINES; ++i) {
+            if (s.found[i].ecu != ecu) continue;
+            printf("ECU %02X  %02X%02X%02X  status %02X\n", ecu, s.found[i].code[0], s.found[i].code[1],
+                   s.found[i].code[2], s.found[i].status);
+            ++lines;
+        }
+    }
+    for (ecu = 0; ecu < 256 && lines < MAX_MODULE_LINES; ++ecu) {
+        if (s.refused[ecu]) printf("ECU %02X  refused NRC %02X\n", ecu, s.nrc[ecu]);
+        else if (s.invalid[ecu]) printf("ECU %02X  invalid reply\n", ecu);
+        else continue;
+        ++lines;
+    }
+    if (s.total > s.stored) printf("More codes returned; first %u shown\n", s.stored);
 }
 
 int main(int argc, char **argv) {
@@ -113,10 +222,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i],"--transport") && i+1<argc && !strcmp(argv[i+1],"most")) { transport=DIAG_MOST; ++i; }
         else if (!strcmp(argv[i],"--codes") && !mode) mode=1;
         else if (!strcmp(argv[i],"--clear") && !mode) mode=2;
+        else if (!strcmp(argv[i],"--all") && !mode) mode=3;
         else break;
     }
     if (i!=argc || !mode || (transport==DIAG_HSFZ && !host)) {
-        fprintf(stderr,"Usage: %s [--host IPv4] [--transport auto|hsfz|most] [--port 6801] (--codes | --clear)\n",argv[0]);
+        fprintf(stderr,"Usage: %s [--host IPv4] [--transport auto|hsfz|most] [--port 6801] (--codes | --clear | --all)\n",argv[0]);
         return 2;
     }
     diag_link_signals();
@@ -128,7 +238,8 @@ int main(int argc, char **argv) {
                                : "Could not reserve the diagnostics connection");
         return 0;
     }
-    fault_codes(&link,mode==2);
+    if (mode==3) all_module_codes(&link);
+    else fault_codes(&link,mode==2,"Engine");
     result_done();
     diag_link_close(&link);
     return 0;

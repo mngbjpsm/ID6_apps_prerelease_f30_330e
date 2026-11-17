@@ -101,6 +101,76 @@ int diag_hsfz_exchange(int fd, unsigned ecu, const unsigned char *uds, unsigned 
     return -1;
 }
 
+/* Reads and drops n bytes of a frame too large for the caller's buffer. */
+static int discard(int fd, uint32_t n, uint64_t deadline) {
+    unsigned char sink[512];
+    while (n) {
+        unsigned part = n > sizeof sink ? (unsigned)sizeof sink : (unsigned)n;
+        if (!transfer(fd, sink, part, 0, deadline)) return 0;
+        n -= part;
+    }
+    return 1;
+}
+
+int diag_hsfz_functional(int fd, unsigned target, const unsigned char *uds, unsigned uds_size,
+                         const unsigned char *prefix, unsigned prefix_size, unsigned first_ms,
+                         unsigned idle_ms, unsigned pending_ms, unsigned max_ms,
+                         diag_reply_fn on_reply, void *ctx) {
+    unsigned char request[48] = {0,0,0,0,0,1,0xf4,0};
+    unsigned char header[6], body[4096];
+    unsigned char pending[256];   /* ECUs that said "pending" and have not answered yet */
+    unsigned waiting = 0;
+    uint64_t start = bd_mono_ms(), hard = start + max_ms, quiet = start + first_ms;
+    int replies = 0;
+    memset(pending, 0, sizeof pending);
+    if (!uds_size || uds_size > sizeof request - 8) return -1;
+    request[3] = (unsigned char)(uds_size+2);
+    request[7] = (unsigned char)target;
+    memcpy(request+8, uds, uds_size);
+    if (!transfer(fd, request, 8+uds_size, 1, start+1000)) return -1;
+    while (diag_running) {
+        uint32_t len;
+        unsigned ctrl, n;
+        const unsigned char *reply;
+        uint64_t now;
+        if (!ready(fd, POLLIN, quiet < hard ? quiet : hard)) break;   /* quiet long enough, or out of time */
+        /* A frame that has begun must arrive whole, or the stream is out of step. */
+        if (!transfer(fd, header, 6, 0, hard + 1000)) return -1;
+        len = ((uint32_t)header[0]<<24)|((uint32_t)header[1]<<16)|((uint32_t)header[2]<<8)|header[3];
+        ctrl = ((unsigned)header[4]<<8)|header[5];
+        if (len > sizeof body) {
+            if (!discard(fd, len, hard + 1000)) return -1;
+            continue;
+        }
+        if (!transfer(fd, body, len, 0, hard + 1000)) return -1;
+        if (ctrl == 0x12) {
+            unsigned char alive[8] = {0,0,0,2,0,0x13,0,0xf4};
+            if (!transfer(fd, alive, 8, 1, hard + 1000)) return -1;
+            continue;
+        }
+        /* HSFZ negative acknowledgements: wrong address, format or size, or diagnostics not ready. */
+        if ((ctrl >= 0x40 && ctrl <= 0x4f) || ctrl == 0xff) {
+            if (!replies) return -2;
+            continue;
+        }
+        if (ctrl != 1 || len < 3 || body[1] != 0xf4) continue;
+        reply = body + 2;
+        n = len - 2;
+        now = bd_mono_ms();
+        if (n == 3 && reply[0] == 0x7f && reply[1] == uds[0] && reply[2] == 0x78) {
+            if (!pending[body[0]]) { pending[body[0]] = 1; ++waiting; }
+        } else if ((n >= 3 && reply[0] == 0x7f && reply[1] == uds[0]) ||
+                   (n >= prefix_size && !memcmp(reply, prefix, prefix_size))) {
+            if (pending[body[0]]) { pending[body[0]] = 0; --waiting; }
+            on_reply(ctx, body[0], reply, n);
+            ++replies;
+        } else continue;
+        /* Each reply restarts the wait; a unit still working on its answer earns the longer one. */
+        quiet = now + (waiting ? pending_ms : idle_ms);
+    }
+    return replies;
+}
+
 /* A DSI send has no timeout, so once MOST is in use SIGALRM's default action bounds every loop and the
  * shutdown. */
 enum { LOOP_FAILS_TO_MOST = 5, MOST_OPEN_MS = 2000, MOST_RETRY_MS = 30000, MOST_WAIT_MIN_MS = 2000,

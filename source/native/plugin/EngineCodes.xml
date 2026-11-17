@@ -10,6 +10,7 @@
       <hmiAction id="10" target="101" />
       <hmiAction id="25" target="102" />
       <raAction id="23" />
+      <raAction id="24" />
       <raAction id="27" />
       <raAction id="29" />
     </actions>
@@ -87,6 +88,14 @@
           <button id="310" action="23" text="Read engine codes">
             <properties>
               <property id="20" value="49" />
+              <property id="21" value="370" />
+              <property id="9" value="460" />
+              <property id="10" value="52" />
+            </properties>
+          </button>
+          <button id="311" action="24" text="Read all modules">
+            <properties>
+              <property id="20" value="529" />
               <property id="21" value="370" />
               <property id="9" value="460" />
               <property id="10" value="52" />

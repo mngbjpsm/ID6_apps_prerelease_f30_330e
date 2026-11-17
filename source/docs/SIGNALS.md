@@ -16,3 +16,7 @@ These are the reference Gen 1 B58/340i candidates in the current source. They ar
 | ShiftDeck speed | DME `12` | OBD `01 0D` | One byte in km/h, displayed in mph. |
 
 The worker enforces data length, plausibility limits, and freshness. Look at the code for exact bounds and units. If the DME reports coolant via `01 05`, confirm that reading against the intended coolant channel before adding an explicit fallback. An OBD PID and a BMW DID are distinct requests with distinct reply formats. [Request table](../native/src/collector.c) · [Decoder](../native/src/gauge_core.c)
+
+## Fault memory
+
+Engine Fault Codes sends UDS `19 02 AF` (DTCs by status mask). **Read engine codes** asks DME `12`. **Read all modules** sends the same request once to the functional address `DF`, which BMW's testers use to reach every control unit, and collects replies until 4 s pass without one (10 s while a unit has answered "pending", 25 s at most). If the gateway refuses `DF` with an HSFZ negative acknowledgement, or nothing answers within 6 s, the worker reconnects and asks each address in `sweep_ecus` in turn, starting with the DME. Unit names come from `native/src/ecu_names.h`. Clearing (`14 FF FF FF`) stays engine-only.

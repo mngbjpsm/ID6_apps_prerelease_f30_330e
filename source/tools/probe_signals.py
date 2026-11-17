@@ -23,6 +23,19 @@ def read_request(value):
     return bytes.fromhex(value)
 
 
+# Read-only targets. The hybrid ECUs answer only over HSFZ, not through the MOST tunnel.
+ECUS = {"07": "SME (high-voltage battery)", "12": "DME", "18": "EGS",
+        "1a": "EME (electric machine, i3 address)", "3a": "EME (electric machine, F-series address)"}
+
+
+def ecu_address(value):
+    address = value.lower()
+    if address not in ECUS:
+        raise argparse.ArgumentTypeError(
+            "use " + ", ".join(f"{code.upper()} for {name}" for code, name in ECUS.items()))
+    return address
+
+
 def exact(connection, length, deadline):
     data = bytearray()
     while len(data) < length:
@@ -62,7 +75,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--local", required=True, type=enet_address, help="computer's wired ENET IPv4")
     parser.add_argument("--gateway", required=True, type=enet_address, help="diagnostic gateway IPv4")
-    parser.add_argument("--ecu", choices=("12", "18"), default="12", help="12 for DME or 18 for EGS")
+    parser.add_argument("--ecu", type=ecu_address, default="12",
+                        help="12 for DME, 18 for EGS, 07 for the hybrid SME, 3A or 1A for the hybrid EME")
     parser.add_argument("requests", nargs="+", type=read_request)
     args = parser.parse_args()
     if args.local == args.gateway or len(args.requests) > 12:

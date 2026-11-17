@@ -46,6 +46,14 @@ int  diag_hsfz_connect(const char *host, unsigned port);
 int  diag_hsfz_exchange(int fd, unsigned ecu, const unsigned char *uds, unsigned n,
                         const unsigned char *prefix, unsigned pn, unsigned char *reply, unsigned cap,
                         unsigned timeout_ms, unsigned *negative);
+/* One request to a functional target (0xDF reaches every ECU) on a plain HSFZ fd. on_reply gets each ECU's
+   final UDS reply: one starting with prefix, or a negative reply other than "pending". Collection ends once
+   no reply came for idle_ms (first_ms before the first one, pending_ms after a pending one) or max_ms has
+   passed. The number of replies; -1 link lost; -2 the gateway refused the target before any reply. */
+typedef void (*diag_reply_fn)(void *ctx, unsigned ecu, const unsigned char *reply, unsigned n);
+int  diag_hsfz_functional(int fd, unsigned target, const unsigned char *uds, unsigned n,
+                          const unsigned char *prefix, unsigned pn, unsigned first_ms, unsigned idle_ms,
+                          unsigned pending_ms, unsigned max_ms, diag_reply_fn on_reply, void *ctx);
 /* One-shot: hold the lease for the run, retrying up to 2000 ms. 0 when not held, errno from the last try. */
 int  diag_link_reserve_oneshot(struct diag_link *);
 
