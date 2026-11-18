@@ -53,9 +53,15 @@ Install status (2026-11-18, nothing installed yet):
   Login is root + password held by the unlock tool (bavarian-ssh-client); no key on the PC is accepted.
   The tool needs internet and ENET at the same time; "No such host is known" means the PC had no DNS.
 - `packages/dashboard.zip` (built at b240814) BoostDeck still sends `2C 88 01` on every page open and every
-  30 s. Don't install it unchanged. Options: rebuild from this branch (QNX toolchain), or patch the single
-  `--ethanol` string in `BoostDeck/libBoostDeck.so` (file offset 0x4aec) to the same-length `--session`.
-  Patch only the plugin, never the collector (the collector would then exit on the unknown argument).
+  30 s. Don't install it unchanged. Owner chose to patch the single `--ethanol` string in
+  `BoostDeck/libBoostDeck.so` (file offset 0x4aec) to the same-length `--session` (6 bytes change; sha256
+  9119468d… → 33376c67ab000c134f97a95b81541e328cc78100f8ef81694ec8f55641c0555a). Patch only the plugin,
+  never the collector. The patched set (BoostDeck, ShiftDeck, EngineCodes + gateway-ip.txt) is staged on the
+  owner's PC outside the repo. Readback must be checked against the staged hash list, not the package's.
+  Read-only reviews of the binaries found: the string has one reference (argv[4] of the only spawn); the
+  packaged collector accepts a repeated `--session` and then sends only the eight DME `22` reads, `22 DA12` to
+  EGS 0x18, and the MOST wrapper. `--session` is a loopback lease lock, not UDS `10 xx`. The packaged collector
+  was built with `NATIVE_FAST` (35 ms loop tick).
 - Packaged EngineCodes predates "Read all modules"; packaged ShiftDeck sends only `01 0C` / `01 0D`.
 - All three workers fall back to the head unit's MOST tunnel (`31 01 0F0B` wrapper around the read) after
   failed HSFZ connects, so `gateway-ip.txt` = 169.254.39.69 must be in each app folder.
