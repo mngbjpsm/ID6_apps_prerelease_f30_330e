@@ -12,3 +12,4 @@
 - **Exhaust Flap** moves under MHD+ Suite → Options, alongside Max Cooling.
 - **Desktop installers** add a read-only compatibility check and recognize matching N18092I and P18362I framework captures.
 - **xDrive Control** distinguishes missing DSC replies, negative replies, and detected DSC indices outside the write allowlist.
+- **BoostDeck** no longer sends the MHD+ ethanol request (`2C 88 01`), and the Active Ethanol tile stays blank. Packaged binaries still contain the old request until they are rebuilt.

@@ -68,10 +68,17 @@ int main(void) {
       assert(!bd_decode_did(0x4a49,signed_min,2,&x)); }
     check(0x580f,iat,1,49.5); check(0x5889,lambda,2,4174*16.0/65535);
     check(0xda12,trans,2,94);
+    /* F30 330e DME, parked, engine off, 2026-11-17. OBD 01 05 read 41 and 83 C at the same time. */
+    { const unsigned char cool_cold[]={0x0c,0x46}, cool_warm[]={0x0d,0xef}, cool_short[]={0x7b};
+      check(0x4300,cool_cold,2,41.05); check(0x4300,cool_warm,2,83.55);
+      x=123;
+      assert(!bd_decode_did(0x4300,cool_short,1,&x) && x==123); /* one-byte reply is not this layout */
+      assert(!bd_decode_did(0x4300,invalid,2,&x) && x==123); }
     assert(!bd_decode_did(0x4205,baro,1,&x)); assert(!bd_decode_did(0xda12,invalid,2,&x));
     assert(!bd_decode_did(0x5889,invalid,2,&x)); assert(!bd_decode_did(0xffff,baro,2,&x));
-    { const unsigned dids[]={0x4201,0x4205,0x5889,0x4a49,0x580f,0xda12};
-      const unsigned char *payloads[]={baro,pressure,lambda,timing,iat,trans};
+    { const unsigned char coolant[]={0x0d,0xef};
+      const unsigned dids[]={0x4201,0x4205,0x5889,0x4a49,0x580f,0xda12,0x4300};
+      const unsigned char *payloads[]={baro,pressure,lambda,timing,iat,trans,coolant};
       unsigned i;
       for (i=0;i<sizeof dids / sizeof dids[0];++i) {
           unsigned char extra[3]={0,0,0xaa};
@@ -98,6 +105,6 @@ int main(void) {
     assert(fabs(bd_display_value(BD_BOOST,14.5037738,1)-1)<.0001);
     assert(fabs(bd_display_value(BD_IAT,100,0)-212)<.0001);
     assert(bd_bar(BD_BOOST,0)==0 && bd_bar(BD_BOOST,-100)==0 && bd_bar(BD_BOOST,999)==1000);
-    puts("Core: recorded signal payloads, signed timing, sentinels, wire format and stale data passed.");
+    puts("Core: recorded signal payloads, 330e coolant, signed timing, sentinels, wire format and stale data passed.");
     return 0;
 }

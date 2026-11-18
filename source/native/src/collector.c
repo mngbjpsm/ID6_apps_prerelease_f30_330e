@@ -478,15 +478,8 @@ int main(int argc, char **argv) {
     const unsigned first_delay[] = {900,0,0,0,500,1150,0,0,1700};
     uint64_t due[sizeof dids/sizeof dids[0]] = {0};
     uint64_t failed_until[sizeof dids/sizeof dids[0]] = {0};
-#ifdef PERF_LAB
-    int ethanol=0;
-    uint64_t next_ethanol=0;
-#endif
     for (i = 1; i < (unsigned)argc; ++i) {
         if (!strcmp(argv[i], "--demo")) demo = 1;
-#ifdef PERF_LAB
-        else if (!strcmp(argv[i], "--ethanol")) ethanol = 1;
-#endif
         else if (!strcmp(argv[i], "--session")) session = 1;
         else if (!strcmp(argv[i], "--trace")) trace_reads = 1;
         else if (!strcmp(argv[i], "--no-trans")) no_trans = 1;
@@ -587,28 +580,8 @@ int main(int argc, char **argv) {
                 /* A tunnel read is slow, so each new value goes out at once. */
                 if (diag_link_on_most(&link) && !send_frame(sock,&dest,&f,observed)) { perror("send frame"); diag_running=0; }
             }
-#ifdef PERF_LAB
-            /* Not over MOST: the tunnel's echo check and 2 s wait do not suit this read. */
-            if (up && link.fd>=0 && ethanol && start>=next_ethanol && diag_running) {
-                /* Published MHD+ MG1 monitor layout. This is the tune's active
-                 * ethanol percentage, distinct from the raw ECA sensor. */
-                const unsigned char query[]={0x2c,0x88,0x01}, prefix[]={0x6c,0x88};
-                unsigned char reply[38];
-                unsigned negative;
-                const int n=diag_link_request(&link,0x12,query,sizeof query,prefix,sizeof prefix,
-                                              reply,sizeof reply,180,&negative);
-                f.valid &= ~(1u<<BD_ETHANOL);
-                if (n==38 && reply[17]<=100) {
-                    observed[BD_ETHANOL]=bd_mono_ms();
-                    f.value[BD_ETHANOL]=reply[17];
-                    f.valid |= 1u<<BD_ETHANOL;
-                    next_ethanol=observed[BD_ETHANOL]+5000;
-                } else {
-                    next_ethanol=bd_mono_ms()+30000;
-                    if (n==-1) diag_link_drop(&link);
-                }
-            }
-#endif
+            /* No ethanol read: the MHD+ request (2C 88 01) is not a plain 22 read and this car
+             * runs a stock tune. The ethanol tile stays blank outside --demo. */
             if (diag_link_on_most(&link)) scanned=1;
             else if (link.fd>=0) {
                 scanned=1;

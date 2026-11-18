@@ -191,11 +191,7 @@ void BoostDeck::startVisibleCollector() {
     if (!gauges_visible_ || collector_>0 || fd_<0 ||
         bd_mono_ms()<retry_at_) return;
     const DiagnosticGateway gateway("/var/opt/hmi/data/ID5/Plugins/" "BoostDeck" "/gateway-ip.txt");
-    const char *args[]={kCollector,"--host",gateway.host(),"--session",
-#ifdef PERF_LAB
-                       "--ethanol",
-#endif
-                       0};
+    const char *args[]={kCollector,"--host",gateway.host(),"--session",0};
     collector_=launch(args,-1);
     retry_at_=bd_mono_ms()+2000;
 }

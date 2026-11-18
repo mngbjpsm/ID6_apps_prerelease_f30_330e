@@ -17,6 +17,18 @@ These are the reference Gen 1 B58/340i candidates in the current source. They ar
 
 The worker enforces data length, plausibility limits, and freshness. Look at the code for exact bounds and units. If the DME reports coolant via `01 05`, confirm that reading against the intended coolant channel before adding an explicit fallback. An OBD PID and a BMW DID are distinct requests with distinct reply formats. [Request table](../native/src/collector.c) · [Decoder](../native/src/gauge_core.c)
 
+## F30 330e (B48 plug-in hybrid)
+
+Tested on one car, stock tune, parked, engine off, DME `F150` = `0F 24 27`. Gateway was `169.254.39.69`, not the reference address.
+
+| DID | Result |
+| --- | --- |
+| Coolant `4300` | **Confirmed.** Two bytes. The reference K ÷ 10 decode matches OBD `01 05` at two points: `0C 46` → 41.05 °C vs 41 °C, `0D EF` → 83.55 °C vs 83 °C. Fixtures are in `native/tests/test_core.c`. |
+| Rail pressure `56D7` | Answers with two bytes (`09 4E`, `23 44`). Scaling unconfirmed: needs an ISTA reading. |
+| Oil pressure `586F` | Answers `03 B2` (0.946 bar by the reference decode) twice with the engine off. Possibly absolute, unconfirmed. |
+
+The hybrid units answer over HSFZ: SME at `07`, EME at `3A` (`1A` times out). Their DIDs are unconfirmed and have no decoder.
+
 ## Fault memory
 
 Engine Fault Codes sends UDS `19 02 AF` (DTCs by status mask). **Read engine codes** asks DME `12`. **Read all modules** sends the same request once to the functional address `DF`, which BMW's testers use to reach every control unit, and collects replies until 4 s pass without one (10 s while a unit has answered "pending", 25 s at most). If the gateway refuses `DF` with an HSFZ negative acknowledgement, or nothing answers within 6 s, the worker reconnects and asks each address in `sweep_ecus` in turn, starting with the DME. Unit names come from `native/src/ecu_names.h`. Clearing (`14 FF FF FF`) stays engine-only.

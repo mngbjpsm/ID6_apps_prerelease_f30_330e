@@ -36,11 +36,29 @@ Done and pushed:
 
 Not done (blocked on car data):
 - Battery / hybrid page.
-- Coolant decode (`gauge_core.c:39`, DID `0x4300`, assumes 2 bytes K/10; research suggests 1 byte on B48).
-- Rail pressure (`gauge_core.c:37`, DID `0x56D7`, /50 bar) — confirm DID and scaling for this DME variant.
-- Ethanol request (`plugin.cpp` passes `--ethanol`; `collector.c` ~line 592) is an MHD-only feature —
-  drop it for this car.
+- Coolant decode (`gauge_core.c:39`, DID `0x4300`): this DME returns 2 bytes and the existing K/10 decode
+  matches OBD `0105` at two points (41.05 vs 41 °C, 83.55 vs 83 °C, 2026-11-17). Decoder needs no change;
+  fixtures added to `native/tests/test_core.c` and noted in SIGNALS.md (not yet compiled: no C compiler on
+  the owner's Windows PC — run `make -C source/native test` on Linux/macOS).
+- Rail pressure (`gauge_core.c:37`, DID `0x56D7`, /50 bar) — answers (47.6 and 180.6 bar at RPM 0 by /50);
+  scaling unconfirmed, needs an ISTA reading.
+- Oil pressure (`586F`) read 0.946 bar twice with the engine off — possibly absolute, unconfirmed.
+- Ethanol request removed from `plugin.cpp` and `collector.c` (it was `2C 88 01`, MHD-only, not a `22` read).
 - Units default / timing decode — check against owner preference (metric) and real data.
+
+Car facts found 2026-11-17: gateway 169.254.39.69 (not 169.254.21.3), EME at `3A` (`1A` times out).
+
+Install status (2026-11-18, nothing installed yet):
+- Head unit SSH at 169.254.199.99, OpenSSH 5.2 QNX, RSA host key only (needs `HostKeyAlgorithms=+ssh-rsa`).
+  Login is root + password held by the unlock tool (bavarian-ssh-client); no key on the PC is accepted.
+  The tool needs internet and ENET at the same time; "No such host is known" means the PC had no DNS.
+- `packages/dashboard.zip` (built at b240814) BoostDeck still sends `2C 88 01` on every page open and every
+  30 s. Don't install it unchanged. Options: rebuild from this branch (QNX toolchain), or patch the single
+  `--ethanol` string in `BoostDeck/libBoostDeck.so` (file offset 0x4aec) to the same-length `--session`.
+  Patch only the plugin, never the collector (the collector would then exit on the unknown argument).
+- Packaged EngineCodes predates "Read all modules"; packaged ShiftDeck sends only `01 0C` / `01 0D`.
+- All three workers fall back to the head unit's MOST tunnel (`31 01 0F0B` wrapper around the read) after
+  failed HSFZ connects, so `gateway-ip.txt` = 169.254.39.69 must be in each app folder.
 
 ## Step 1 — probe the car (owner runs, you interpret)
 
