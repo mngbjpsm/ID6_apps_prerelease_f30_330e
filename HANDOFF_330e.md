@@ -48,7 +48,7 @@ Not done (blocked on car data):
 
 Car facts found 2026-11-17: gateway 169.254.39.69 (not 169.254.21.3), EME at `3A` (`1A` times out).
 
-Install status (2026-11-18, nothing installed yet):
+Install status (2026-11-19: still nothing installed, login refused — see `INSTALL_STATUS_330e.md`):
 - Head unit SSH at 169.254.199.99, OpenSSH 5.2 QNX, RSA host key only (needs `HostKeyAlgorithms=+ssh-rsa`).
   Login is root + password held by the unlock tool (bavarian-ssh-client); no key on the PC is accepted.
   The tool needs internet and ENET at the same time; "No such host is known" means the PC had no DNS.
