@@ -64,7 +64,8 @@ Install status (2026-11-18, nothing installed yet):
   was built with `NATIVE_FAST` (35 ms loop tick).
 - Packaged EngineCodes predates "Read all modules"; packaged ShiftDeck sends only `01 0C` / `01 0D`.
 - All three workers fall back to the head unit's MOST tunnel (`31 01 0F0B` wrapper around the read) after
-  failed HSFZ connects, so `gateway-ip.txt` = 169.254.39.69 must be in each app folder.
+  failed HSFZ connects, so `gateway-ip.txt` = 169.254.39.69 must be in each app folder. The owner accepted
+  this fallback for the packaged install (2026-11-19). Removing it needs a rebuild.
 
 ## Step 1 — probe the car (owner runs, you interpret)
 
